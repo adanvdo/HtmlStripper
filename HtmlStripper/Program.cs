@@ -4,6 +4,7 @@ using System.IO;
 using HtmlStripper.Utils;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
 
 namespace HtmlStripper
 {
@@ -11,6 +12,7 @@ namespace HtmlStripper
     {
         static int maxInputAttempts = 3;
         static string directoryPath = string.Empty;
+        static string copyToDirectoryPath = string.Empty;
         static List<HtmlFile> htmlFiles = new();
         static string jsonPath = string.Empty;
         static Elements elements = null;
@@ -23,30 +25,41 @@ namespace HtmlStripper
         {
             foreach (var arg in args)
             {
-                if (arg.StartsWith("dir=")) directoryPath = arg.Replace("dir=", "");
+                string argValue = arg;
+                if (arg.StartsWith("-")) argValue = arg.Remove(0, 1);
 
-                if (arg.StartsWith("json=")) jsonPath = arg.Replace("json=", "");
+                if (argValue.StartsWith("dir=")) directoryPath = argValue.Replace("dir=", "");
+                if (argValue.StartsWith("json=")) jsonPath = argValue.Replace("json=", "");
+                if (argValue.StartsWith("copydir=")) copyToDirectoryPath = argValue.Replace("copydir=", "");
             }
 
             if (directoryPath.Length < 1)
             {
                 Console.WriteLine("Directory Path Needed");
+                Console.WriteLine();
                 getDirectory();
+                return;
             }
             else if (htmlFiles.Count < 1)
             {
                 Console.WriteLine("Html Files Needed");
+                Console.WriteLine();
                 getHtmlFiles(new DirectoryInfo(directoryPath));
+                return;
             }
             else if (jsonPath.Length < 1)
             {
                 Console.WriteLine("Json Path Needed");
+                Console.WriteLine();
                 getJsonFile();
+                return;
             }
             else
             {
                 Console.WriteLine("Deserialization Needed");
+                Console.WriteLine();
                 parseJsonFile(new FileInfo(jsonPath));
+                return;
             }
         }
 
@@ -56,9 +69,10 @@ namespace HtmlStripper
         private static void getDirectory()
         {
             directoryPath = string.Empty;
+            copyToDirectoryPath = string.Empty;
             jsonPath = string.Empty;
             htmlFiles = new List<HtmlFile>();
-
+            elements = null;
 
             int inputAttempts = 0;
             bool ok = false;
@@ -96,10 +110,21 @@ namespace HtmlStripper
             {
                 getJsonFile();
             }
-            else
+            else if(elements == null)
             {
                 parseJsonFile(new FileInfo(jsonPath));
             }
+        }
+
+        /// <summary>
+        /// Gets a list of all html files in the targeted directory
+        /// </summary>
+        /// <param name="dir"></param>
+        private static bool updateHtmlFiles(DirectoryInfo dir)
+        {
+            htmlFiles = FileUtil.ListHtmlFiles(dir);
+            if (htmlFiles == null) return false;
+            return true;
         }
 
         /// <summary>
@@ -148,7 +173,6 @@ namespace HtmlStripper
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
-                getJsonFile();
                 return;
             }
 
@@ -159,31 +183,119 @@ namespace HtmlStripper
             }
             else
             {
-                stripHtmlFiles();
+                createCopies();
             }
-
         }
 
         private static string progressTemplate = "[----------------------------------------]";
 
         /// <summary>
-        /// Strips the Html file content of any elements specified in the json file.
+        /// Updates the progress displayed in the console
         /// </summary>
-        private static void stripHtmlFiles()
+        /// <param name="completed"></param>
+        /// <exception cref="ArgumentException"></exception>
+        private static void updateProgress(int completed)
         {
-            int processed = 0;
-            DirectoryInfo tempDir = null;
+            if (completed > 40) throw new ArgumentException("value exceeds expected range");
+            if (completed == 0) return;
+
+            var progress = progressTemplate.Replace(progressTemplate.Substring(0, completed + 1), progressTemplate.Substring(0, completed + 1).Replace('-', '#'));
+            Console.Write("\r{0}", progress);
+        }
+
+        private static void createCopies()
+        {
             try
             {
-                DirectoryInfo di = new DirectoryInfo(directoryPath);
-                tempDir = Directory.CreateDirectory(Path.Combine(di.Parent == null ? di.FullName : di.Parent.FullName, $"{di.Name}_Stripped_{DateTime.Now.Ticks}"));
+                if (!string.IsNullOrEmpty(copyToDirectoryPath))
+                {
+                    DirectoryInfo copyDir = new DirectoryInfo(copyToDirectoryPath);
+                    if (copyDir.Exists)
+                    {
+                        var files = copyDir.GetFiles("*.*", SearchOption.AllDirectories);
+                        if(files.Length > 0)
+                        {
+                            bool clean = promptForContinue($"The destination folder {copyToDirectoryPath} exists and contains files. These files will be deleted if we proceed.");
+                            if (clean)
+                            {
+                                Console.WriteLine();
+                                Console.WriteLine("Deleting Folder Contents");
+                                FileUtil.DeleteFolderContents(copyToDirectoryPath);
+                            }
+                            else
+                            {
+                                Console.WriteLine("The process was cancelled.");
+                                Console.WriteLine();
+                                getDirectory();
+                            }
+                        }                        
+                    }
+                }
+                else
+                {
+                    bool ok = false;
+                    copyToDirectoryPath = promptForInput("Enter destination folder path for updated files, or press enter to have one created for you", FileUtil.IsValidDirectory, true);
+                    ok = copyToDirectoryPath != null;
+                    if (!ok)
+                    {
+                        DirectoryInfo dir = new DirectoryInfo(directoryPath);
+                        var copyDir = Directory.CreateDirectory(Path.Combine(dir.Parent != null ? dir.Parent.FullName : dir.FullName, $"{dir.Name}_Copy_{DateTime.Now.ToString("hhmmssms")}"));
+                        copyToDirectoryPath = copyDir.FullName;
+                    }
+                    else if(copyToDirectoryPath == directoryPath)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("The destination folder cannot be the same as the source folder");
+                        copyToDirectoryPath = string.Empty;
+                        createCopies();
+                        return;
+                    }
+                }
+
+                Console.WriteLine("Creating File Copies..");
+                Console.WriteLine();
+
+                bool copyComplete = FileUtil.CopyFilesAndFoldersRecursively(directoryPath, copyToDirectoryPath, updateProgress);
+                if (!copyComplete)
+                {
+                    Console.WriteLine("The process has failed or was interrupted.");
+                    Console.WriteLine();
+                    getDirectory();
+                    return;
+                }
+
+                Console.WriteLine("Updating Metadata");
+                Console.WriteLine();
+                bool updateFiles = updateHtmlFiles(new DirectoryInfo(copyToDirectoryPath));
+
+                Console.WriteLine("Stripping HTML..");
+                Console.WriteLine();
+                stripHtmlFiles(copyToDirectoryPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Strips the Html file content of any elements specified in the json file.
+        /// </summary>
+        private static void stripHtmlFiles(string baseDirectory)
+        {
+            int processed = 0;
+            try
+            {
+                DirectoryInfo di = new DirectoryInfo(baseDirectory);
 
                 decimal conversion = (decimal)40 / (decimal)htmlFiles.Count;
 
                 int progress = 0;
+                Console.Write(progressTemplate);
+
                 foreach (HtmlFile file in htmlFiles)
                 {
-                    file.Strip(elements, file.FilePath.Replace(directoryPath, tempDir.FullName));
+                    file.Strip(elements);
                     processed++;
                     progress = (int)(processed * conversion);
                     updateProgress(progress);
@@ -200,24 +312,19 @@ namespace HtmlStripper
             Console.WriteLine();
             Console.WriteLine();
             Console.WriteLine($"Stripped Elements from {processed} HTML files");
-            Console.WriteLine($"Files have been saved to: {tempDir.FullName}");
-            Console.WriteLine("Press any key to exit");
-            Console.ReadKey();
+            Console.WriteLine($"Updated Files can be found in: {baseDirectory}");
+            Console.WriteLine();
+            Console.WriteLine("Press 'o' to open the directory. Press any other key to exit");
+            var key = Console.ReadKey();
+            if(key.Key == ConsoleKey.O)
+            {
+                string argument = "/select, \"" + baseDirectory + "\"";
+
+                Process.Start("explorer.exe", argument);
+                Thread.Sleep(500);
+            }
+
             Environment.Exit(0);
-        }
-
-        /// <summary>
-        /// Updates the progress displayed in the console
-        /// </summary>
-        /// <param name="completed"></param>
-        /// <exception cref="ArgumentException"></exception>
-        private static void updateProgress(int completed)
-        {
-            if (completed > 40) throw new ArgumentException("value exceeds expected range");
-            if (completed == 0) return;
-
-            var progress = progressTemplate.Replace(progressTemplate.Substring(0, completed + 1), progressTemplate.Substring(0, completed + 1).Replace('-', '#'));
-            Console.Write("\r{0}", progress);
         }
 
         /// <summary>
@@ -232,9 +339,12 @@ namespace HtmlStripper
                 Console.WriteLine(message);
             }
             Console.WriteLine("Continue? (y/n)");
-            string input = Console.ReadLine();
+            Console.Write("=> ");
+            var input = Console.ReadKey();
 
-            return input != null && input.ToLower() == "y";
+            Console.WriteLine();
+            Console.WriteLine();
+            return input != null && input.Key == ConsoleKey.Y;
         }
 
         /// <summary>
@@ -243,7 +353,7 @@ namespace HtmlStripper
         /// <param name="prompt"></param>
         /// <param name="validationMethod"></param>
         /// <returns></returns>
-        private static string promptForInput(string prompt, Delegate validationMethod)
+        private static string promptForInput(string prompt, Delegate validationMethod, bool? methodCondition = null)
         {
             try
             {
@@ -254,16 +364,21 @@ namespace HtmlStripper
                 }
 
                 bool valid = false;
+                Console.WriteLine();
                 Console.WriteLine(prompt);
+                Console.Write("=> ");
                 string input = Console.ReadLine();
-                if (string.IsNullOrEmpty(input)) { return null; }
 
-                bool validate = (bool)validationMethod.DynamicInvoke(input);
+                Console.WriteLine();
+                if (string.IsNullOrEmpty(input.Remove(0,3))) { return null; }
+
+                bool validate = methodCondition != null ? (bool)validationMethod.DynamicInvoke(input, methodCondition) : (bool)validationMethod.DynamicInvoke(input);
                 if (validate) return input;
                 return null;
             }
             catch (Exception ex)
             {
+                Console.WriteLine();
                 Console.WriteLine(ex.Message);
                 return null;
             }

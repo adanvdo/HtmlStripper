@@ -11,13 +11,31 @@ namespace HtmlStripper
     public class Elements
     {
         [JsonPropertyName("class")]
-        public List<string> Class { get; set; } = new();
+        public List<Element> Class { get; set; } = new();
         [JsonPropertyName("tag")]
-        public List<string> Tag { get; set; } = new();
+        public List<Element> Tag { get; set; } = new();
+        [JsonPropertyName("id")]
+        public List<Element> Id { get; set; } = new();
         [JsonPropertyName("other")]
-        public List<string> Other { get; set; } = new();
+        public List<Element> Other { get; set; } = new();
 
         public Elements() { }
+    }
+
+    public class Element
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; }
+        [JsonPropertyName("remove")]
+        public Remove Remove { get; set; }
+
+        public Element() { }
+
+        public Element(string name, Remove remove)
+        {
+            Name = name;
+            Remove = remove;
+        }
     }
 
     public class StripResults
@@ -31,5 +49,12 @@ namespace HtmlStripper
             this.Strip = toStrip;
             this.NotStripped = new Elements();
         }
+    }
+
+    public enum Remove
+    {
+        Element = 0,
+        Contents = 1,
+        ContentsAndAttributes = 2
     }
 }
