@@ -51,13 +51,13 @@ With this example configuration, HtmlStripper will search each file for:
  ### other
  a list of node types. html nodes will be matched if they have a matching element type
 
-## How to uses
+## How To Use
 
 ### Prompts
 If you launch HtmlStripper without any command-line arguments, it will prompt you to specify:
  1. The path to the directory containing the html files you want to process.
  2. The path to the json configuration file
- 
+  
 ### Command-Line arguments
-If you launch HtmlStripper from the command-line, you can specify the directory and json paths to avoid being prompted
-`htmlstripper.exe -dir=C:\Website\Pages -json=C:\Website\striplist.json`
+If you launch HtmlStripper from the command-line, you can specify the directory and json paths to avoid being prompted  
+`htmlstripper.exe -dir=C:\Website\Pages -json=C:\Website\striplist.json -copydir=C:\Website\Copies`
